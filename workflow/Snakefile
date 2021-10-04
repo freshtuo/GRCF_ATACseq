@@ -1,0 +1,165 @@
+import os.path
+
+configfile: "config/config.yaml"
+
+def get_read1_file(wildcards):
+    return config["read1"][wildcards.sample]
+
+def get_read2_file(wildcards):
+    return config["read2"][wildcards.sample]
+
+def get_bam_files(wildcards):
+    #return ','.join(['results/sort_bam_by_name/{}.name_sorted.bam'.format(x) for x in config["group"][wildcards.condition]])
+    return ['results/sort_bam_by_name/{}.name_sorted.bam'.format(x) for x in config["group"][wildcards.condition]]
+
+rule all:
+    input:
+        rawqc=expand("results/raw_fastq_qc/{sample}_R1_fastqc.html", sample=config["read1"]),
+        trimqc=expand("results/trim_fastq_qc/{sample}_R1.trimmed_fastqc.html", sample=config["read1"]),
+        bam=expand("results/remove_duplicates/{sample}.nodup.bam", sample=config["read1"]),
+        sortbam=expand("results/sort_bam_by_name/{sample}.name_sorted.bam", sample=config["read1"]),
+        peak=expand("results/call_peak_genrich/{condition}.narrowPeak.gz", condition=config["group"])
+
+rule rename_fastq:
+    input:
+        read1=get_read1_file,
+        read2=get_read2_file
+    output:
+        read1=temp("results/rename_fastq/{sample}_R1.fastq.gz"),
+        read2=temp("results/rename_fastq/{sample}_R2.fastq.gz")
+    shell:
+        "cp {input.read1} {output.read1}; "
+        "cp {input.read2} {output.read2}"
+
+rule raw_fastq_qc:
+    input:
+        read1="results/rename_fastq/{sample}_R1.fastq.gz",
+        read2="results/rename_fastq/{sample}_R2.fastq.gz"
+    output:
+        out1="results/raw_fastq_qc/{sample}_R1_fastqc.html",
+        out2="results/raw_fastq_qc/{sample}_R2_fastqc.html"
+    log:
+        "results/logs/raw_fastq_qc/{sample}.log"
+    conda:
+        "../envs/fastqc.yaml"
+    threads: 4
+    shell:
+        "fastqc --outdir results/raw_fastq_qc --threads {threads} --quiet {input.read1} {input.read2} >{log} 2>&1"
+
+rule trim_adapter:
+    input:
+        read1="results/rename_fastq/{sample}_R1.fastq.gz",
+        read2="results/rename_fastq/{sample}_R2.fastq.gz"
+    output:
+        read1=temp("results/trim_fastq/{sample}_R1.trimmed.fastq.gz"),
+        read2=temp("results/trim_fastq/{sample}_R2.trimmed.fastq.gz")
+    params:
+        overlap=config["overlap"],
+        adapter3=config["adapter3"],
+        adapter5=config["adapter5"],
+        minlen=config["minlen"],
+        qscore=config["qscore"]
+    log:
+        "results/logs/trim_fastq/{sample}.log",
+    threads: 4
+    conda:
+        "../envs/cutadapt.yaml"
+    shell:
+        "cutadapt -j {threads} -O {params.overlap} -m {params.minlen} -q {params.qscore} -a {params.adapter3} -A {params.adapter5} -o {output.read1} -p {output.read2} {input.read1} {input.read2} >{log} 2>&1; "
+
+rule trim_fastq_qc:
+    input:
+        read1="results/trim_fastq/{sample}_R1.trimmed.fastq.gz",
+        read2="results/trim_fastq/{sample}_R2.trimmed.fastq.gz"
+    output:
+        out1="results/trim_fastq_qc/{sample}_R1.trimmed_fastqc.html",
+        out2="results/trim_fastq_qc/{sample}_R2.trimmed_fastqc.html"
+    log:
+        "results/logs/trim_fastq_qc/{sample}.log"
+    conda:
+        "../envs/fastqc.yaml"
+    threads: 4
+    shell:
+        "fastqc --outdir results/trim_fastq_qc --threads {threads} --quiet {input.read1} {input.read2} >{log} 2>&1"
+
+rule bowtie_align:
+    input:
+        read1="results/trim_fastq/{sample}_R1.trimmed.fastq.gz",
+        read2="results/trim_fastq/{sample}_R2.trimmed.fastq.gz"
+    output:
+        bam="results/bowtie_align/{sample}.sorted.bam",
+        bai="results/bowtie_align/{sample}.sorted.bam.bai"
+    params:
+        refidx=config["refidx"],
+        maxins=config["maxins"],
+        multimap=config["multimap"]
+    log:
+        bam="results/logs/bowtie_align/{sample}.bowtie2.log",
+        bai="results/logs/bowtie_align/{sample}.samtools.log"
+    conda:
+        "../envs/bowtie.yaml"
+    threads: 8
+    shell:
+        "bowtie2 -X {params.maxins} --very-sensitive -k {params.multimap} --threads {threads} -x {params.refidx} -1 {input.read1} -2 {input.read2} 2>{log.bam} "
+        "|samtools sort -@ {threads} -O BAM -T results/bowtie_align/{wildcards.sample}.tmp -o {output.bam} - >{log.bai};"
+        "samtools index -@ {threads} {output.bam} >>{log.bai} 2>&1"
+
+rule remove_duplicates:
+    input:
+        bam="results/bowtie_align/{sample}.sorted.bam",
+        bai="results/bowtie_align/{sample}.sorted.bam.bai"
+    output:
+        bam="results/remove_duplicates/{sample}.nodup.bam",
+        bai="results/remove_duplicates/{sample}.nodup.bai",
+        metric="results/remove_duplicates/{sample}.metrics"
+    log: "results/logs/remove_duplicates/{sample}.picard.log"
+    conda:
+        "../envs/picard.yaml"
+    shell:
+        "picard MarkDuplicates QUIET=true INPUT={input.bam} OUTPUT={output.bam} METRICS_FILE={output.metric} "
+        "REMOVE_DUPLICATES=true ASSUME_SORTED=true CREATE_INDEX=true VALIDATION_STRINGENCY=LENIENT TMP_DIR=results/remove_duplicates >{log} 2>&1"
+
+rule atacseq_qc:
+    input:
+        bam="results/remove_duplicates/{sample}.nodup.bam",
+        bai="results/remove_duplicates/{sample}.nodup.bai"
+    output:
+        "results/atacseq_qc/report.{sample}.html"
+    log:
+        "results/logs/atacseq_qc/{sample}.log"
+    conda:
+        "../envs/atacseqqc.yaml"
+    script:
+        "../scripts/ATACseqQC.Rmd"
+
+rule sort_bam_by_name:
+    input:
+        bam="results/remove_duplicates/{sample}.nodup.bam",
+        bai="results/remove_duplicates/{sample}.nodup.bai"
+    output:
+        bam="results/sort_bam_by_name/{sample}.name_sorted.bam"
+    log: "results/logs/sort_bam_by_name/{sample}.log"
+    conda:
+        "../envs/bowtie.yaml"
+    threads: 8
+    shell:
+        "samtools sort -@ {threads} -O BAM -T results/sort_bam_by_name/{wildcards.sample}.tmp -n -o {output.bam} {input.bam} >{log} 2>&1"
+
+rule call_peak_genrich:
+    input:
+        bam=get_bam_files
+    output:
+        peak="results/call_peak_genrich/{condition}.narrowPeak.gz",
+        log="results/call_peak_genrich/{condition}.log.gz"
+    params:
+        exchrs=config["exchrs"],
+        exregs=config["exregs"],
+        qcut=config["qcut"],
+        acut=config["acut"]
+    log: "results/logs/call_peak_genrich/{condition}.log"
+    conda:
+        "../envs/genrich.yaml"
+    shell:
+        "Genrich -j -t '{input.bam}' -o {output.peak} -f {output.log} -z -v "
+        "-e {params.exchrs} -E {params.exregs} -q {params.qcut} -a {params.acut} >{log} 2>&1"
+

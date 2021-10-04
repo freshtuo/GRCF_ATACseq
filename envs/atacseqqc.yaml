@@ -1,0 +1,15 @@
+channels:
+    - bioconda
+    - conda-forge
+    - r
+dependencies:
+    - r-base
+    - r-rmarkdown
+    - bioconductor-atacseqqc=1.16.0
+    - bioconductor-chippeakanno=3.26.0
+    - bioconductor-genomicalignments=1.28.0
+    - bioconductor-rsamtools=2.8.0
+    - r-ggplot2=3.3.5
+    - bioconductor-bsgenome.hsapiens.ucsc.hg19=1.4.3
+    - bioconductor-txdb.hsapiens.ucsc.hg19.knowngene=3.2.2
+    - bioconductor-phastcons100way.ucsc.hg19=3.7.2

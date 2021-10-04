@@ -1,0 +1,268 @@
+---
+title: "ATACseqQC Report"
+author:
+    - "by GRCF"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+    html_document:
+        code_folding: hide
+---
+
+
+### Introduction
+
+Examine the quality of ATACseq alignment data.
+
+### Import R libraries
+```{r}
+library(ATACseqQC, quietly=T)
+library(Rsamtools, quietly=T)
+library(BSgenome.Hsapiens.UCSC.hg19, quietly=T)
+library(TxDb.Hsapiens.UCSC.hg19.knownGene, quietly=T)
+library(phastCons100way.UCSC.hg19, quietly=T)
+library(ChIPpeakAnno, quietly=T)
+library(ggplot2, quietly=T)
+
+# location of bam file
+bamfile <- snakemake@input[['bam']]
+idxfile <- snakemake@input[['bai']]
+idxprefix <- gsub('.bai', '', idxfile)
+
+# infer sample id
+sid <- strsplit(basename(bamfile), split='[.]')[[1]][1]
+print(paste('Sample id:',sid))
+
+# output directory
+outdir <- file.path(dirname(snakemake@output[[1]]), sid)
+if (! file.exists(outdir)){
+    dir.create(outdir)
+}
+```
+
+### Fragment size distribution
+
+There should be a large proportion of reads with less than 100 bp, which represents the nucleosome-free region. 
+Besides, the fragment size distribution should have a clear periodicity, which is evident in the inset figure, 
+indicative of nucleosome occupacy (present in integer multiples).
+
+```{r, fig.width=7.5, fig.height=5, dpi=300}
+fragSize <- fragSizeDist(bamFiles=bamfile, bamFiles.labels=sid, index=idxprefix)
+```
+
+### Nucleosome positioning
+
+#### *Adjust the read start sites*
+
+Tn5 transposase has been shown to bind as a dimer and inserts two adaptors into accessible DNA locations separated by 9 bp.
+
+Therefore, for downstream analysis, such as peak-calling and footprinting, all reads in input bamfile need to be shifted. 
+The function shiftGAlignmentsList is used to shift the reads. By default, all reads aligning to the positive strand are offset by +4bp, 
+and all reads aligning to the negative strand are offset by -5bp.
+
+The adjusted reads will be written into a new bamfile for peak calling or footprinting.
+
+```{r, fig.width=7.5, fig.height=5, dpi=300}
+# bamfile tags to be read in
+possibleTag <- list("integer"=c("AM", "AS", "CM", "CP", "FI", "H0", "H1", "H2",
+                                "HI", "IH", "MQ", "NH", "NM", "OP", "PQ", "SM",
+                                "TC", "UQ"),
+                    "character"=c("BC", "BQ", "BZ", "CB", "CC", "CO", "CQ", "CR",
+                                  "CS", "CT", "CY", "E2", "FS", "LB", "MC", "MD",
+                                  "MI", "OA", "OC", "OQ", "OX", "PG", "PT", "PU",
+                                  "Q2", "QT", "QX", "R2", "RG", "RX", "SA", "TS",
+                                  "U2"))
+
+# chromosomes to consider
+seqlev <- paste0("chr", c(1:22,"X","Y"))
+##seqinformation <- seqinfo(TxDb.Hsapiens.UCSC.hg19.knownGene)
+seqinformation <- seqinfo(Hsapiens)
+
+# get available tags
+bamTop100 <- scanBam(BamFile(bamfile, yieldSize = 100), 
+                    param = ScanBamParam(tag=unlist(possibleTag)))[[1]]$tag
+tags <- names(bamTop100)[lengths(bamTop100)>0]
+print('Tags detected in bam file:')
+tags
+
+# Adjust the read start sites
+which <- as(seqinformation[seqlev], "GRanges")
+# convert style chr1 --> 1
+seqlevelsStyle(which) <- 'NCBI'
+gal <- readBamFile(bamfile, tag=tags, which=which, asMates=TRUE, bigFile=TRUE)
+shiftedBamfile <- file.path(outdir, paste(sid, "shifted", "bam", sep='.'))
+gal1 <- shiftGAlignmentsList(gal, outbam=shiftedBamfile)
+##saveRDS(gal1, file=file.path(outdir, paste(sid, "gal1", "rds", sep='.')))
+```
+#### *Promoter/Transcript body (PT) score*
+
+PT score is calculated as the coverage of promoter divided by the coverage of its transcript body. 
+PT score will show if the signal is enriched in promoters.
+
+```{r, fig.width=7.5, fig.height=5, dpi=300}
+txs <- transcripts(TxDb.Hsapiens.UCSC.hg19.knownGene)
+pt <- PTscore(gal1, txs)
+##saveRDS(pt, file=paste(outdir,paste(sid,"PT","rds",sep='.'),sep='/'))
+
+# plot
+g <- ggplot(data.frame(log2meanCoverage=pt$log2meanCoverage, PT_Score=pt$PT_score))
+g <- g + geom_point(aes(x=log2meanCoverage, y=PT_Score), shape=1, size=3)
+g <- g + theme_bw() + theme(axis.title=element_text(color='black', size=18), axis.text=element_text(color='black', size=16))
+g <- g + xlab("log2 mean coverage") + ylab("Promoter vs Transcript")
+print(g)
+##ggsave(file.path(outdir, paste(sid,"PT.score","png",sep='.')), width=7.5, height=5, dpi=300)
+```
+
+#### *Nucleosome Free Regions (NFR) score*
+
+NFR score is a ratio between cut signal adjacent to TSS and that flanking the corresponding TSS. 
+Each TSS window of 400 bp is first divided into 3 sub-regions: 
+the most upstream 150 bp (n1), the most downstream of 150 bp (n2), and the middle 100 bp (nf). 
+Then the number of fragments with 5’ ends overlapping each region are calculated for each TSS. 
+The NFR score for each TSS is calculated as NFR-score = log2(nf) - log2((n1+n2)/2). 
+A plot can be generated with the NFR scores as Y-axis and the average signals of 400 bp window as X-axis, 
+very like a MA plot for gene expression data.
+
+```{r, fig.width=7.5, fig.height=5, dpi=300}
+nfr <- NFRscore(gal1, txs)
+##saveRDS(nfr, file=paste(outdir,paste(sid,"nfr","rds",sep='.'),sep='/'))
+
+# plot
+g <- ggplot(data.frame(log2meanCoverage=nfr$log2meanCoverage, NFR_Score=nfr$NFR_score))
+g <- g + geom_point(aes(x=log2meanCoverage, y=NFR_Score), shape=1, size=3)
+g <- g + theme_bw() + theme(axis.title=element_text(color='black', size=18), axis.text=element_text(color='black', size=16))
+g <- g + theme(plot.title=element_text(color='black', hjust=0.5, size=22))
+g <- g + xlab("log2 mean coverage") + ylab("Nucleosome Free Regions score")
+g <- g + ggtitle("NFRscore for 200bp flanking TSSs")
+print(g)
+##ggsave(paste(outdir,paste(sid,"NFRscore","png",sep='.'),sep='/'), width=7.5, height=5, dpi=300)
+g <- g + coord_cartesian(xlim=c(-10, 5), ylim=c(-10, 10))
+print(g)
+##ggsave(paste(outdir,paste(sid,"NFRscore","rescaled","png",sep='.'),sep='/'), width=7.5, height=5, dpi=300)
+```
+
+#### *Transcription Start Site (TSS) Enrichment Score*
+TSS enrichment score is a raio between aggregate distribution of reads centered on TSSs and that flanking the corresponding TSSs. 
+TSS score = the depth of TSS (each 100bp window within 1000 bp each side) / the depth of end flanks (100bp each end). 
+TSSE score = max(mean(TSS score in each window)). 
+TSS enrichment score is calculated according to the definition at https://www.encodeproject.org/data-standards/terms/#enrichment. 
+Transcription start site (TSS) enrichment values are dependent on the reference files used; 
+cutoff values for high quality data are listed in the following table from https://www.encodeproject.org/atac-seq/.
+
+For example, using hg19 Refseq TSS annotation, TSS enrichment score
+< 6     Concerning
+6 - 10  Acceptable
+> 10    Ideal
+
+```{r, fig.width=7.5, fig.height=5, dpi=300}
+tsse <- TSSEscore(gal1, txs)
+print(paste('TSS Enrichment Score =', tsse$TSSEscore))
+##saveRDS(tsse, file=paste(outdir,paste(sid,"tsse","rds",sep='.'),sep='/'))
+
+# plot
+g <- ggplot(data.frame(x=100*(-9:10-.5), score=tsse$values))
+g <- g + geom_line(aes(x=x, y=score), color="black")
+g <- g + geom_point(aes(x=x, y=score), shape=21, color="black", fill="white", size=3)
+g <- g + theme_bw() + theme(axis.title=element_text(color='black', size=18), axis.text=element_text(color='black', size=16))
+g <- g + theme(plot.title=element_text(color='black', hjust=0.5, size=22))
+g <- g + xlab("distance to TSS") + ylab("aggregate TSS score")
+g <- g + ggtitle("TSS enrichment score")
+print(g)
+##ggsave(paste(outdir,paste(sid,"TSS.enrichment.score","png",sep='.'),sep='/'), width=7.5, height=5, dpi=300)
+```
+#### *Split reads*
+
+The shifted reads will be split into different bins, namely nucleosome free, mononucleosome, dinucleosome, and trinucleosome. 
+Shifted reads that do not fit into any of the above bins will be discarded. 
+Splitting reads is a time-consuming step because we are using random forest to classify the fragments based on 
+fragment length, GC content and conservation scores.
+
+By default, we assign the top 10% of short reads (reads below 100_bp) as nucleosome-free regions and 
+the top 10% of intermediate length reads as (reads between 180 and 247 bp) mononucleosome. 
+This serves as the training set to classify the rest of the fragments using random forest. 
+The number of the tree will be set to 2 times of square root of the length of the training set.
+
+```{r, fig.width=7.5, fig.height=5, dpi=300}
+# define chromosomes to process
+txs <- txs[seqnames(txs) %in% seqlev]
+genome <- Hsapiens
+# convert style chr1 --> 1
+seqlevelsStyle(txs) <- 'NCBI'
+seqlevelsStyle(genome) <- "NCBI"
+
+# split the reads into NucleosomeFree, mononucleosome, dinucleosome and trinucleosome.
+# and save the binned alignments into bam files.
+##objs <- splitGAlignmentsByCut(gal1, txs=txs, genome=genome, outPath=outdir, conservation=phastCons100way.UCSC.hg19)
+# Conservation is an optional parameter. 
+# If you do not have the conservation score or you would like to simply split the bam files using the fragment length, 
+# then you will just need to run the command without providing the conservation argument. 
+# Without setting the conservation parameter, it will run much faster.
+objs <- splitGAlignmentsByCut(gal1, txs=txs, genome=genome, outPath=outdir)
+##saveRDS(objs, file=paste(outdir,paste(sid,"objs","rds",sep='.'),sep='/'))
+```
+
+#### *Heatmap and coverage curve for nucleosome positions*
+
+By averaging the signal across all active TSSs, 
+we should observe that nucleosome-free fragments are enriched at the TSSs, 
+whereas the nucleosome-bound fragments should be enriched both upstream and downstream of the active TSSs and 
+display characteristic phasing of upstream and downstream nucleosomes. 
+Because ATAC-seq reads are concentrated at regions of open chromatin, 
+users should see a strong nucleosome signal at the +1 nucleosome, but the signal decreases at the +2, +3 and +4 nucleosomes.
+
+```{r, fig.width=5, fig.height=10, dpi=300}
+bamfiles <- file.path(outdir,
+                    c("NucleosomeFree.bam",
+                    "mononucleosome.bam",
+                    "dinucleosome.bam",
+                    "trinucleosome.bam"))
+
+TSS <- promoters(txs, upstream=0, downstream=1)
+TSS <- unique(TSS)
+
+# estimate the library size for normalization
+librarySize <- estLibSize(bamfiles)
+
+# calculate the signals around TSSs.
+NTILE <- 101
+dws <- ups <- 1010
+sigs <- enrichedFragments(gal=objs[c("NucleosomeFree",
+                                    "mononucleosome",
+                                    "dinucleosome",
+                                    "trinucleosome")],
+                            TSS=TSS,
+                            librarySize=librarySize,
+                            seqlev=seqlev,
+                            TSS.filter=0.5,
+                            n.tile = NTILE,
+                            upstream = ups,
+                            downstream = dws)
+##saveRDS(sigs, file=paste(outdir,paste(sid,"sigs","rds",sep='.'),sep='/'))
+
+# log2 transformed signals
+sigs.log2 <- lapply(sigs, function(.ele) log2(.ele+1))
+# plot heatmap
+##png(paste(outdir, paste(sid,"feature","aligned","heatmap","png",sep='.'), sep='/'), width=5, height=10, units="in", res=300)
+featureAlignedHeatmap(sigs.log2, reCenterPeaks(TSS, width=ups+dws), zeroAt=.5, n.tile=NTILE)
+##dev.off()
+```
+
+```{r, fig.width=7.5, fig.height=5, dpi=300}
+# get signals normalized for nucleosome-free and nucleosome-bound regions.
+out <- featureAlignedDistribution(sigs,
+                                reCenterPeaks(TSS, width=ups+dws),
+                                zeroAt=.5, n.tile=NTILE, type="l",
+                                ylab="Averaged coverage")
+
+# rescale the nucleosome-free and nucleosome signals to 0~1
+range01 <- function(x){(x-min(x))/(max(x)-min(x))}
+out <- apply(out, 2, range01)
+##png(paste(outdir, paste(sid,"feature","aligned","distribution","png",sep='.'), sep='/'), width=7.5, height=4.5, units="in", res=300)
+matplot(out, type="l", xaxt="n",
+        xlab="Position (bp)",
+        ylab="Fraction of signal")
+axis(1, at=seq(0, 100, by=10)+1,
+     labels=c("-1K", seq(-800, 800, by=200), "1K"), las=2)
+abline(v=seq(0, 100, by=10)+1, lty=2, col="gray")
+##dev.off()
+```
+
