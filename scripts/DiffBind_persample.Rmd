@@ -1,0 +1,255 @@
+---
+title: "Running differential binding analysis using DiffBind"
+author:
+    - "by GRCF"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+    html_document:
+        code_folding: hide
+---
+
+
+### Introduction
+
+Merge peaks from each sample according to its group, such that: 1) a peak is kept only if it shows up in at least two replicate samples within a group; 
+2) take a union for peaks from different groups. 
+Extract peak counts matrix and perform differential binding analysis.
+
+### Import R libraries and initialize folders & sample sheet
+
+```{r}
+library(DiffBind, quietly=T, warn.conflicts=FALSE)
+library(ggplot2, quietly=T, warn.conflicts=FALSE)
+library(dplyr, quietly=T, warn.conflicts=FALSE)
+library(tidyr, quietly=T, warn.conflicts=FALSE)
+library(tibble, quietly=T, warn.conflicts=FALSE)
+##library(profileplyr, quietly=T, warn.conflicts=FALSE)
+library(csaw, quietly=T, warn.conflicts=FALSE)
+
+# location of bam files
+bamfiles <- snakemake@input[['bam']]
+
+# location of consensus peak files
+peakfiles <- snakemake@input[['peak']]
+
+# output directory
+outdir <- dirname(snakemake@output[[1]])
+
+# infer sample ids
+bam.info <- data.frame(SampleID=sapply(basename(bamfiles), FUN=function(x) { strsplit(x, '[.]')[[1]][1] }),
+    bamReads=bamfiles)
+
+# infer group id
+peak.info <- data.frame(SampleID=sapply(basename(peakfiles), FUN=function(x) { strsplit(x, '[.]')[[1]][1] }),
+    Peaks=peakfiles, PeakCaller=rep('narrow', length(peakfiles)))
+
+# extract config group - sample mapping
+config.groups <- snakemake@config[['group']]
+
+sample.info <- data.frame(SampleID=character(), Condition=character(), Replicate=numeric())
+for (group in names(config.groups)){
+    sample.info <- rbind(sample.info, data.frame(SampleID=config.groups[[group]], Condition=group, Replicate=1:length(config.groups[[group]])))
+}
+
+# merge info and create a sample sheet
+samples <- as.data.frame(sample.info %>% left_join(bam.info, by='SampleID') %>% left_join(peak.info, by='SampleID'))
+
+samples
+write.table(samples, file.path(outdir, 'samples.txt'), quote=F, sep='\t', row.names=F)
+```
+
+### Perform a quick occupancy analysis on the peaksets
+
+Read in peaksets, generate a consensus peakset by:
+- calculate consensus peaks overlap in at least two replicate samples for each condition
+- calculate the final consensus peaks set by taking a union of peaks from all conditions
+- Discard a pre-defined list of regions, as part of the ENCODE project, specific to the reference genome that are known to be problematic.
+
+```{r, fig.width=7.5, fig.height=5, dpi=300}
+# create a dba object
+panc <- dba(minOverlap=1, sampleSheet=samples)
+
+# make a venn diagram on replicate samples within each condition
+for (group in names(config.groups)){
+    print(paste('Condition',group))
+    # output the number of overlapping sites in at least one, two and more replicate samples
+    print('Number of unique/overlapping sites in at least one, two and more replicate samples:')
+    dba.overlap(panc,panc$masks$P4,mode=DBA_OLAP_RATE)
+    # make a venn diagram to show overlapping details
+    dba.plotVenn(panc, panc$mask[[group]])
+}
+
+# calculate consensus peaks overlap in at least two replicate samples in each condition
+# this will add condition-level masks
+panc_consensus <- dba.peakset(panc, consensus=DBA_CONDITION, minOverlap=2)
+
+# make a venn diagram to compare across conditions
+print('Number of unique/overlapping sites in different conditions')
+dba.plotVenn(panc_consensus, panc_consensus$masks$Consensus)
+
+# get detailed unique/overlapping sites between conditions
+#panc.OL <- dba.overlap(panc_consensus, panc_consensus$masks$Consensus)
+
+# calculate the final consensus peaks set
+panc_consensus <- dba(panc_consensus, mask=panc_consensus$masks$Consensus, minOverlap=1)
+# below command adds a new consensus entry (ID), which is not set as default peak set
+###panc_consensus <- dba.peakset(panc_consensus, panc_consensus$masks$Consensus, minOverlap=1, sampID="OL_Consensus")
+
+# apply ENCODE blacklist
+panc_consensus <- dba.blacklist(panc_consensus, blacklist=DBA_BLACKLIST_GRCH37, greylist=FALSE)
+
+# save the final consensus peaks set as GRanges object
+saveRDS(panc_consensus, file.path(outdir, 'panc_consensus.rds'))
+```
+
+### Count reads in the consensus peaks set
+
+- Count reads in binding site intervals
+- Plot a correlation heatmap based on the count scores
+
+```{r, fig.width=7.5, fig.height=6, dpi=300}
+# extract consensus peaks for reads counting
+consensus.peaks <- dba.peakset(panc_consensus, bRetrieve=TRUE)
+
+print('Final consensus peaks set:')
+consensus.peaks
+
+# count reads in binding site intervals
+# DBA object with binding affinity matrix based on read count scores.
+panc <- dba.count(panc, peaks=consensus.peaks)
+
+# show information
+dba.show(panc)
+
+# plot a correlation heatmap
+plot(panc)
+```
+
+### Normalize the data
+
+We can either use the default normalization, that is, normalize based on sequencing depth, 
+or apply background normalization, that is, divide the genome into large non-overlapping bins (default size 15,000bp) and count overlapping reads.
+As the enrichment expected in ChIP-seq (and ATAC-seq) is expected to occur over relatively narrow intervals (roughly between 100bp and 600bp), 
+it is expected that there should not be systematic differences in signals over much larger intervals (on the order of 10,000bp and greater). 
+Any differences seen should be technical rather than biological, so it is safer to normalize based these differences.
+Note also that this type of background normalization is one of the methods recommended for ATAC-seq analysis.
+
+In the absence of spike-ins or a parallel factors, the "safest" method is probably to set
+background=TRUE and normalize=DBA_NORM_NATIVE, resulting in the use of background reads
+and the native normalization method (TMM for edgeR , and RLE for DESeq2 ). This can
+be approximated at very low computational cost, with no extra reading of bam files, by
+the default settings of library=DBA_LIBSIZE_FULL, normalize=DBA_NORM_LIBRARY, and back
+ground=FALSE.
+
+
+```{r, fig.width=7.5, fig.height=6, dpi=300}
+# default normailzation
+#panc <- dba.normalize(panc)
+# background normalization
+panc <- dba.normalize(panc, background=TRUE, normalize=DBA_NORM_NATIVE)
+
+# examine the details of the normalization
+norm <- dba.normalize(panc, bRetrieve=TRUE)
+norm
+
+# regenerate the correlation heatmap after normalization
+plot(panc)
+```
+
+### Perform the differential analysis
+
+First, establish a model design and contrast. Then run differential analysis (using DESeq2 by default).
+
+The metadata columns show the mean read concentration over all the samples (the default
+calculation uses log2 normalized read counts) and the mean concentration over the samples
+in each of the first group and second group. The Fold column shows
+the log fold changes (LFCs) between the two groups, as calculated by the DESeq2 analysis.
+A positive value indicates increased binding affinity in the Resistant group, and a negative
+value indicates increased binding affinity in the Responsive group. The final two columns give
+confidence measures for identifying these sites as differentially bound, with a raw p-value and
+a multiple-testing corrected FDR in the final column (also calculated by the DESeq2 analysis).
+
+
+```{r, fig.width=7.5, fig.height=6, dpi=300}
+# pass design model to DiffBind
+panc <- dba.contrast(panc, design="~Condition", reorderMeta=list(Condition="P4"))
+panc
+
+# perform the differential analysis
+panc <- dba.analyze(panc)
+
+# show a dataframe of contrast information
+dba.show(panc, bContrasts=TRUE)
+
+# generate a correlation heatmap using the differentially bound sites only
+plot(panc, contrast=1)
+
+# retrieve the differentially bound sites
+panc.DB <- dba.report(panc)
+
+# save R objects
+saveRDS(panc, file.path(outdir, 'panc.rds'))
+saveRDS(panc.DB, file.path(outdir, 'panc.DB.rds'))
+```
+
+### Plot using DiffBind
+
+1. Venn diagram
+
+Venn diagrams illustrate overlaps between different sets of peaks. For example, amongst
+the differentially bound sites, we can see the differences between the "Gain" sites (those that
+increase binding enrichment) and the "Loss" sites (those with lower
+enrichment).
+
+```{r, fig.width=7.5, fig.height=6, dpi=300}
+dba.plotVenn(panc, contrast=1, bDB=TRUE, bGain=TRUE, bLoss=TRUE, bAll=FALSE)
+```
+
+2. PCA plot
+
+While the correlation heatmaps already seen are good for showing clustering, plots based
+on principal components analysis can be used to give a deeper insight into how samples are
+associated. A PCA plot includes normalized read counts for all binding sites.
+
+```{r, fig.width=7.5, fig.height=6, dpi=300}
+dba.plotPCA(panc, attributes=c(DBA_CONDITION), label=DBA_REPLICATE)
+```
+
+3. MA plot
+
+MA plots are a useful way to visualize the relationship between the overall binding level at
+each site and the magnitude of the change in binding enrichment between conditions, as well
+as the effect of normalization on data.
+
+```{r, fig.width=7.5, fig.height=6, dpi=300}
+dba.plotMA(panc)
+```
+
+4. Boxplot
+
+Boxplots provide a way to view how read distributions differ between classes of binding sites.
+
+dba.plotBox returns a matrix of p-values (computed using a two-sided Wilcoxon ‘MannWhitney’ test, paired where appropriate) indicating which of these distributions are significantly different from another distribution.
+
+```{r, fig.width=7.5, fig.height=6, dpi=300}
+pvals <- dba.plotBox(panc)
+pvals
+```
+
+5. Profiling and Profile Heatmap (currently skipped, has problems installing the R profileplyr package)
+
+The dba.plotProfile() function enables the computation of peakset profiles and the plotting of complex heatmaps. 
+
+<!-- ```{r, fig.width=6, fig.height=7.5, dpi=300} -->
+<!-- profiles <- dba.plotProfile(panc) -->
+
+<!-- saveRDS(profiles, file.path(outdir, 'profiles.rds')) -->
+
+<!-- dba.plotProfile(profiles) -->
+<!-- ``` -->
+
+### Output package versions as a reference
+```{r}
+sessionInfo()
+```
+

@@ -1,0 +1,14 @@
+channels:
+    - bioconda
+    - conda-forge
+    - r
+dependencies:
+    - r-base
+    - r-rmarkdown
+    - r-dplyr
+    - r-tidyr
+    - r-tibble
+    - r-ggplot2=3.3.5
+    - bioconductor-diffbind=3.2.1
+    - bioconductor-csaw=1.26.0
+    #- bioconductor-profileplyr=1.6.0
