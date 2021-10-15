@@ -18,7 +18,10 @@ rule all:
         trimqc=expand("results/trim_fastq_qc/{sample}_R1.trimmed_fastqc.html", sample=config["read1"]),
         bam=expand("results/remove_duplicates/{sample}.nodup.bam", sample=config["read1"]),
         sortbam=expand("results/sort_bam_by_name/{sample}.name_sorted.bam", sample=config["read1"]),
-        peak=expand("results/call_peak_genrich/{condition}.narrowPeak.gz", condition=config["group"])
+        peakall=expand("results/call_peak_genrich/{condition}.narrowPeak.gz", condition=config["group"]),
+        peak=expand("results/call_peak_genrich_per_sample/{sample}.narrowPeak.gz", sample=config["read1"]),
+        diffbind="results/differential_binding_analysis/report.DiffBind.html",
+        diffbindpersample="results/differential_binding_analysis_per_sample/report.DiffBind.persample.html"
 
 rule rename_fastq:
     input:
@@ -162,4 +165,51 @@ rule call_peak_genrich:
     shell:
         "Genrich -j -t '{input.bam}' -o {output.peak} -f {output.log} -z -v "
         "-e {params.exchrs} -E {params.exregs} -q {params.qcut} -a {params.acut} >{log} 2>&1"
+
+rule call_peak_genrich_per_sample:
+    input:
+        bam="results/sort_bam_by_name/{sample}.name_sorted.bam"
+    output:
+        peak="results/call_peak_genrich_per_sample/{sample}.narrowPeak.gz"
+    params:
+        exchrs=config["exchrs"],
+        exregs=config["exregs"],
+        qcut=config["qcut"],
+        acut=config["acut"]
+    log: "results/logs/call_peak_genrich_per_sample/{sample}.log"
+    conda:
+        "../envs/genrich.yaml"
+    shell:
+        "Genrich -j -t {input.bam} -o {output.peak} -z -v "
+        "-e {params.exchrs} -E {params.exregs} -q {params.qcut} -a {params.acut} >{log} 2>&1"
+
+rule differential_binding_analysis:
+    input:
+        bam=expand("results/remove_duplicates/{sample}.nodup.bam", sample=config["read1"]),
+        bai=expand("results/remove_duplicates/{sample}.nodup.bai", sample=config["read1"]),
+        peak=expand("results/call_peak_genrich/{condition}.narrowPeak.gz", condition=config["group"])
+    output:
+        "results/differential_binding_analysis/report.DiffBind.html"
+    log:
+        "results/logs/differential_binding_analysis/DiffBind.log"
+    threads: 8
+    conda:
+        "../envs/diffbind.yaml"
+    script:
+        "../scripts/DiffBind.Rmd"
+
+rule differential_binding_analysis_per_sample:
+    input:
+        bam=expand("results/remove_duplicates/{sample}.nodup.bam", sample=config["read1"]),
+        bai=expand("results/remove_duplicates/{sample}.nodup.bai", sample=config["read1"]),
+        peak=expand("results/call_peak_genrich_per_sample/{sample}.narrowPeak.gz", sample=config["read1"])
+    output:
+        "results/differential_binding_analysis_per_sample/report.DiffBind.persample.html"
+    log:
+        "results/logs/differential_binding_analysis_per_sample/DiffBind.persample.log"
+    threads: 8
+    conda:
+        "../envs/diffbind.yaml"
+    script:
+        "../scripts/DiffBind_persample.Rmd"
 
