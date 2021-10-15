@@ -6,3 +6,6 @@
 ## Overview
 
 A workflow to process bulk ATAC-seq data.
+
+![workflow](chart/dag.svg)
+
