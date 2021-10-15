@@ -2,3 +2,4 @@ data/
 source/
 results/
 .snakemake/
+.Rhistory
