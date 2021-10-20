@@ -1,0 +1,245 @@
+---
+title: "Annotate peaks using ChIPseeker"
+author:
+    - "by GRCF"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+    html_document:
+        code_folding: hide
+---
+
+
+### Introduction
+
+1) Annotate peaks detected in each sample, as part of the QC process.
+
+2) Annotate the differential binding peaks identified by DiffBind.
+
+### Import R libraries and initialize folders & sample sheet
+
+```{r}
+# location of log file
+logfile <- snakemake@input[['log']]
+
+sink(logfile, type='message')
+
+library(ChIPseeker, quietly=T, warn.conflicts=FALSE)
+##library(ggplot2, quietly=T, warn.conflicts=FALSE)
+##library(dplyr, quietly=T, warn.conflicts=FALSE)
+##library(tidyr, quietly=T, warn.conflicts=FALSE)
+##library(tibble, quietly=T, warn.conflicts=FALSE)
+library(TxDb.Hsapiens.UCSC.hg19.knownGene, quietly=T, warn.conflicts=FALSE)
+library(clusterProfiler, quietly=T, warn.conflicts=FALSE)
+library(ReactomePA, quietly=T, warn.conflicts=FALSE)
+library(org.Hs.eg.db, quietly=T, warn.conflicts=FALSE)
+
+# location of consensus peak files
+peakfiles <- snakemake@input[['peak']]
+
+# location of DiffBind results
+dedir <- dirname(snakemake@input[['de']])
+
+# output directory
+outdir <- dirname(snakemake@output[[1]])
+
+# file storing the differentially bound sites
+de.file <- file.path(dedir, 'DE.peaks.txt')
+
+# infer sample names
+# "results/call_peak_genrich_per_sample/CM_C4_D28_1.narrowPeak.gz"
+samples <- as.vector(sapply(peakfiles, function(x) { gsub('.narrowPeak.gz','',basename(x)) }))
+
+#print(peakfiles)
+#print(samples)
+#knitr::knit_exit()
+```
+
+### Annotate peaks in each sample
+
+```{r}
+# load the knownGene track
+txdb <- TxDb.Hsapiens.UCSC.hg19.knownGene
+
+# change the style of the chromosome names from UCSC to Ensembl
+seqlevelsStyle(txdb) <- "NCBI"
+
+# prepare the TSS regions, which are defined as the flanking sequence of the TSS sites.
+promoter <- getPromoters(TxDb=txdb, upstream=3000, downstream=3000)
+
+# collect peak data in each sample
+peakAnnoList <- lapply(peakfiles, annotatePeak, TxDb=txdb, tssRegion=c(-3000, 3000), annoDb="org.Hs.eg.db", verbose=FALSE)
+names(peakAnnoList) <- samples
+
+# align the peak that are mapping to the TSS regions, and generate the tagMatrix
+tagMatrixList <- lapply(peakfiles, getTagMatrix, windows=promoter)
+names(tagMatrixList) <- samples
+```
+
+To annotate the location of a given peak in terms of genomic features, 
+annotatePeak assigns peaks to genomic annotation in “annotation” column of the output, 
+which includes whether a peak is in the TSS, Exon, 5’ UTR, 3’ UTR, Intronic or Intergenic. 
+
+Pie and Bar plot are supported to visualize the genomic annotation.
+Since some annotation overlap, user may interested to view the full annotation with their overlap, which can be partially resolved by vennpie function.
+The full annotation overlap can be viewed using upsetplot function.
+
+The plotDistToTSS function can be used to calculate the percentage of binding sites upstream and downstream from the TSS of the nearest genes, and visualize the distribution.
+
+1. Bar plot to visualize genomic annotation for each sample (side-by-side)
+
+```{r fig.width=7.5, fig.height=5.5, dpi=300}
+plotAnnoBar(peakAnnoList, title="Feature Distribution")
+```
+
+2. Pie chart to visualize the genomic annotation for each sample (separated)
+
+```{r fig.width=8.5, fig.height=5, dpi=300}
+#sink(logfile, append=TRUE, type='message')
+
+for (k in 1:length(peakAnnoList)){
+    print(samples[k])
+    peakAnno = peakAnnoList[[k]]
+    print(plotAnnoPie(peakAnno))
+}
+```
+
+3. vennpie plot to show the full annotation overlap for each sample (separated)
+
+```{r fig.width=12.5, fig.height=9.5, dpi=300}
+for (k in 1:length(peakAnnoList)){
+    print(samples[k])
+    peakAnno = peakAnnoList[[k]]
+    print(vennpie(peakAnno))
+}
+```
+
+4. upsetplot to show the full annotation overlap for each sample (separated)
+
+```{r fig.width=12.5, fig.height=9.5, dpi=300}
+for (k in 1:length(peakAnnoList)){
+    print(samples[k])
+    peakAnno = peakAnnoList[[k]]
+    print(upsetplot(peakAnno, vennpie=FALSE))
+    ##print(upsetplot(peakAnno, vennpie=TRUE))
+}
+```
+
+5. Visualize the percentage of binding sites upstream and downstream from the TSS of the nearest genes, for each sample (side-by-side)
+
+```{r fig.width=10, fig.height=8.5, dpi=300}
+plotDistToTSS(peakAnnoList, title="Feature Distribution relative to TSS")
+```
+
+6. Average Profile of ChIP peaks binding to TSS region
+
+- overview
+
+```{r fig.width=7.5, fig.height=6.5, dpi=300}
+plotAvgProf(tagMatrixList, xlim=c(-3000, 3000))
+```
+
+- separted by sample
+
+```{r fig.width=9, fig.height=6.5, dpi=300}
+plotAvgProf(tagMatrixList, xlim=c(-3000, 3000), conf=0.95,resample=500, facet="row")
+```
+
+7. Peak heatmaps
+
+```{r fig.width=10, fig.height=9.5, dpi=300}
+tagHeatmap(tagMatrixList, xlim=c(-3000, 3000), color=NULL)
+```
+
+8. GO/pathway enrichment analysis on peaks in each sample
+
+Skipped: ChIPseeker also provides a function, seq2gene, for linking genomc regions to genes in a many-to-many mapping. 
+It consider host gene (exon/intron), promoter region and flanking gene from intergenic region that may under control via cis-regulation. 
+This function is designed to link both coding and non-coding genomic regions to coding genes and facilitate functional analysis.
+
+<!-- ```{r} -->
+<!-- geneList <- lapply(peakfiles, function(x) { seq2gene(readPeakFile(x), tssRegion=c(-1000, 1000), flankDistance=3000, TxDb=txdb) }) -->
+<!-- ``` -->
+
+Alternatively, we can also extracted genes from peak annotations
+```{r}
+geneList <- lapply(peakAnnoList, function(i) as.data.frame(i)$geneId)
+```
+
+- GO enrichment
+
+```{r fig.width=12, fig.height=13.5, dpi=300}
+# comparing biological themes among gene clusters
+compGO <- compareCluster(geneCluster=geneList, fun='enrichGO', pvalueCutoff=0.05, pAdjustMethod="BH", OrgDb='org.Hs.eg.db')
+
+# make dot plot
+dotplot(compGO, showCategory = 20, title = "GO Enrichment Analysis")
+```
+
+- KEGG enrichment
+```{r fig.width=12, fig.height=13.5, dpi=300}
+# comparing biological themes among gene clusters
+compKEGG <- compareCluster(geneCluster=geneList, fun='enrichKEGG', pvalueCutoff=0.05, pAdjustMethod="BH")
+
+# make dot plot
+dotplot(compKEGG, showCategory = 20, title = "KEGG Pathway Enrichment Analysis")
+```
+
+### Annotate the differentially bound sites
+
+```{r}
+# load the DE differential bound sites
+de.peaks <- read.table(de.file, header=T, check.names=F, stringsAsFactors=F, sep='\t')
+
+# convert to GRanges object
+de.peaks.gr <- makeGRangesFromDataFrame(de.peaks, keep.extra.columns=TRUE)
+
+# peak annotation
+peakAnno <- annotatePeak(de.peaks.gr, tssRegion=c(-3000, 3000), TxDb=txdb, annoDb="org.Hs.eg.db")
+
+# write to file
+write.table(as.data.frame(peakAnno), file=file.path(outdir, 'DE.peaks.annotated.txt'), quote=F, sep='\t', row.names=FALSE)
+
+# perform go/pathway analysis
+gene <- as.data.frame(peakAnno)$geneId
+```
+
+1. GO enrichment
+
+```{r fig.width=13.5, fig.height=8.5, dpi=300}
+# molecular function
+go.mf <- enrichGO(gene=gene, OrgDb='org.Hs.eg.db', ont='MF', pAdjustMethod="BH", pvalueCutoff=0.01, qvalueCutoff=0.05, readable=TRUE)
+write.table(go.mf, file.path(outdir, 'DE.peaks.GO.MF.txt'), quote=F, sep='\t', row.names=FALSE)
+dotplot(go.mf, showCategory=20, title="GO.MF Enrichment Analysis")
+
+# biological process
+go.bp <- enrichGO(gene=gene, OrgDb='org.Hs.eg.db', ont='BP', pAdjustMethod="BH", pvalueCutoff=0.01, qvalueCutoff=0.05, readable=TRUE)
+write.table(go.bp, file.path(outdir, 'DE.peaks.GO.BP.txt'), quote=F, sep='\t', row.names=FALSE)
+dotplot(go.bp, showCategory=20, title="GO.BP Enrichment Analysis")
+
+# cellular components
+go.cc <- enrichGO(gene=gene, OrgDb='org.Hs.eg.db', ont='CC', pAdjustMethod="BH", pvalueCutoff=0.01, qvalueCutoff=0.05, readable=TRUE)
+write.table(go.cc, file.path(outdir, 'DE.peaks.GO.CC.txt'), quote=F, sep='\t', row.names=FALSE)
+dotplot(go.cc, showCategory=20, title="GO.CC Enrichment Analysis")
+```
+
+2. KEGG pathway enrichment
+```{r fig.width=13.5, fig.height=8.5, dpi=300}
+kegg <- enrichKEGG(gene=gene, organism="hsa", keyType="kegg", pAdjustMethod="BH", pvalueCutoff=0.01, qvalueCutoff=0.05)
+write.table(kegg, file.path(outdir, 'DE.peaks.KEGG.txt'), quote=F, sep='\t', row.names=FALSE)
+dotplot(kegg, showCategory=20, title="KEGG Pathway Enrichment Analysis")
+```
+
+3. Reactome pathway enrichment
+```{r fig.width=13.5, fig.height=8.5, dpi=300}
+reactome <- enrichPathway(gene=gene, organism="human", pAdjustMethod="BH", pvalueCutoff=0.01, qvalueCutoff=0.05, readable=TRUE)
+write.table(reactome, file.path(outdir, 'DE.peaks.Reactome.txt'), quote=F, sep='\t', row.names=FALSE)
+dotplot(reactome, showCategory=20, title="Reactome Pathway Enrichment Analysis")
+```
+
+### Output package versions as a reference
+```{r}
+sessionInfo()
+
+sink(append=TRUE, type='message')
+```
+

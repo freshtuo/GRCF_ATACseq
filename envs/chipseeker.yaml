@@ -1,0 +1,15 @@
+name: chipseeker
+channels:
+    - bioconda
+    - conda-forge
+    - r
+dependencies:
+    - r-base
+    - r-rmarkdown=2.1
+    #- bioconductor-do.db=2.9
+    #- bioconductor-chipseeker=1.26.2
+    - bioconductor-chipseeker=1.18.0
+    - bioconductor-reactomepa=1.26.0
+    - bioconductor-clusterprofiler=3.10.1
+    - bioconductor-org.hs.eg.db=3.7.0
+    - bioconductor-txdb.hsapiens.ucsc.hg19.knowngene=3.2.2
