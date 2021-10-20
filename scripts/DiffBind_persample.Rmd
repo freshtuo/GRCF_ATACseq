@@ -187,6 +187,9 @@ plot(panc, contrast=1)
 # retrieve the differentially bound sites
 panc.DB <- dba.report(panc)
 
+# write to file
+write.table(as.data.frame(panc.DB), file.path(outdir, 'DE.peaks.txt'), quote=F, sep='\t', row.names=FALSE)
+
 # save R objects
 saveRDS(panc, file.path(outdir, 'panc.rds'))
 saveRDS(panc.DB, file.path(outdir, 'panc.DB.rds'))
