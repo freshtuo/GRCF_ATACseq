@@ -16,12 +16,12 @@ Examine the quality of ATACseq alignment data.
 ### Import R libraries
 ```{r}
 library(ATACseqQC, quietly=T)
-library(Rsamtools, quietly=T)
-library(BSgenome.Hsapiens.UCSC.hg19, quietly=T)
-library(TxDb.Hsapiens.UCSC.hg19.knownGene, quietly=T)
-library(phastCons100way.UCSC.hg19, quietly=T)
-library(ChIPpeakAnno, quietly=T)
-library(ggplot2, quietly=T)
+#library(Rsamtools, quietly=T)
+#library(BSgenome.Hsapiens.UCSC.hg19, quietly=T)
+#library(TxDb.Hsapiens.UCSC.hg19.knownGene, quietly=T)
+#library(phastCons100way.UCSC.hg19, quietly=T)
+#library(ChIPpeakAnno, quietly=T)
+#library(ggplot2, quietly=T)
 
 # location of bam file
 bamfile <- snakemake@input[['bam']]
@@ -37,6 +37,9 @@ outdir <- file.path(dirname(snakemake@output[[1]]), sid)
 if (! file.exists(outdir)){
     dir.create(outdir)
 }
+
+print(paste('setting TMPDIR to:', Sys.getenv('TMPDIR')))
+##knitr::knit_exit()
 ```
 
 ### Fragment size distribution
@@ -55,8 +58,8 @@ fragSize <- fragSizeDist(bamFiles=bamfile, bamFiles.labels=sid, index=idxprefix)
 
 <!-- Tn5 transposase has been shown to bind as a dimer and inserts two adaptors into accessible DNA locations separated by 9 bp. -->
 
-<!-- Therefore, for downstream analysis, such as peak-calling and footprinting, all reads in input bamfile need to be shifted.  -->
-<!-- The function shiftGAlignmentsList is used to shift the reads. By default, all reads aligning to the positive strand are offset by +4bp,  -->
+<!-- Therefore, for downstream analysis, such as peak-calling and footprinting, all reads in input bamfile need to be shifted. -->
+<!-- The function shiftGAlignmentsList is used to shift the reads. By default, all reads aligning to the positive strand are offset by +4bp, -->
 <!-- and all reads aligning to the negative strand are offset by -5bp. -->
 
 <!-- The adjusted reads will be written into a new bamfile for peak calling or footprinting. -->
@@ -78,7 +81,7 @@ fragSize <- fragSizeDist(bamFiles=bamfile, bamFiles.labels=sid, index=idxprefix)
 <!-- seqinformation <- seqinfo(Hsapiens) -->
 
 <!-- # get available tags -->
-<!-- bamTop100 <- scanBam(BamFile(bamfile, yieldSize = 100),  -->
+<!-- bamTop100 <- scanBam(BamFile(bamfile, yieldSize = 100), -->
 <!--                     param = ScanBamParam(tag=unlist(possibleTag)))[[1]]$tag -->
 <!-- tags <- names(bamTop100)[lengths(bamTop100)>0] -->
 <!-- print('Tags detected in bam file:') -->
@@ -99,7 +102,6 @@ fragSize <- fragSizeDist(bamFiles=bamfile, bamFiles.labels=sid, index=idxprefix)
 <!-- PT score will show if the signal is enriched in promoters. -->
 
 <!-- ```{r, fig.width=7.5, fig.height=5, dpi=300} -->
-<!-- txs <- transcripts(TxDb.Hsapiens.UCSC.hg19.knownGene) -->
 <!-- pt <- PTscore(gal1, txs) -->
 <!-- ##saveRDS(pt, file=paste(outdir,paste(sid,"PT","rds",sep='.'),sep='/')) -->
 
@@ -141,11 +143,11 @@ fragSize <- fragSizeDist(bamFiles=bamfile, bamFiles.labels=sid, index=idxprefix)
 <!-- ``` -->
 
 <!-- #### *Transcription Start Site (TSS) Enrichment Score* -->
-<!-- TSS enrichment score is a raio between aggregate distribution of reads centered on TSSs and that flanking the corresponding TSSs.  -->
-<!-- TSS score = the depth of TSS (each 100bp window within 1000 bp each side) / the depth of end flanks (100bp each end).  -->
-<!-- TSSE score = max(mean(TSS score in each window)).  -->
-<!-- TSS enrichment score is calculated according to the definition at https://www.encodeproject.org/data-standards/terms/#enrichment.  -->
-<!-- Transcription start site (TSS) enrichment values are dependent on the reference files used;  -->
+<!-- TSS enrichment score is a raio between aggregate distribution of reads centered on TSSs and that flanking the corresponding TSSs. -->
+<!-- TSS score = the depth of TSS (each 100bp window within 1000 bp each side) / the depth of end flanks (100bp each end). -->
+<!-- TSSE score = max(mean(TSS score in each window)). -->
+<!-- TSS enrichment score is calculated according to the definition at https://www.encodeproject.org/data-standards/terms/#enrichment. -->
+<!-- Transcription start site (TSS) enrichment values are dependent on the reference files used; -->
 <!-- cutoff values for high quality data are listed in the following table from https://www.encodeproject.org/atac-seq/. -->
 
 <!-- For example, using hg19 Refseq TSS annotation, TSS enrichment score -->
@@ -154,6 +156,7 @@ fragSize <- fragSizeDist(bamFiles=bamfile, bamFiles.labels=sid, index=idxprefix)
 <!-- > 10    Ideal -->
 
 <!-- ```{r, fig.width=7.5, fig.height=5, dpi=300} -->
+<!-- txs <- transcripts(TxDb.Hsapiens.UCSC.hg19.knownGene) -->
 <!-- tsse <- TSSEscore(gal1, txs) -->
 <!-- print(paste('TSS Enrichment Score =', tsse$TSSEscore)) -->
 <!-- ##saveRDS(tsse, file=paste(outdir,paste(sid,"tsse","rds",sep='.'),sep='/')) -->
@@ -171,14 +174,14 @@ fragSize <- fragSizeDist(bamFiles=bamfile, bamFiles.labels=sid, index=idxprefix)
 <!-- ``` -->
 <!-- #### *Split reads* -->
 
-<!-- The shifted reads will be split into different bins, namely nucleosome free, mononucleosome, dinucleosome, and trinucleosome.  -->
-<!-- Shifted reads that do not fit into any of the above bins will be discarded.  -->
-<!-- Splitting reads is a time-consuming step because we are using random forest to classify the fragments based on  -->
+<!-- The shifted reads will be split into different bins, namely nucleosome free, mononucleosome, dinucleosome, and trinucleosome. -->
+<!-- Shifted reads that do not fit into any of the above bins will be discarded. -->
+<!-- Splitting reads is a time-consuming step because we are using random forest to classify the fragments based on -->
 <!-- fragment length, GC content and conservation scores. -->
 
-<!-- By default, we assign the top 10% of short reads (reads below 100_bp) as nucleosome-free regions and  -->
-<!-- the top 10% of intermediate length reads as (reads between 180 and 247 bp) mononucleosome.  -->
-<!-- This serves as the training set to classify the rest of the fragments using random forest.  -->
+<!-- By default, we assign the top 10% of short reads (reads below 100_bp) as nucleosome-free regions and -->
+<!-- the top 10% of intermediate length reads as (reads between 180 and 247 bp) mononucleosome. -->
+<!-- This serves as the training set to classify the rest of the fragments using random forest. -->
 <!-- The number of the tree will be set to 2 times of square root of the length of the training set. -->
 
 <!-- ```{r, fig.width=7.5, fig.height=5, dpi=300} -->
@@ -192,9 +195,9 @@ fragSize <- fragSizeDist(bamFiles=bamfile, bamFiles.labels=sid, index=idxprefix)
 <!-- # split the reads into NucleosomeFree, mononucleosome, dinucleosome and trinucleosome. -->
 <!-- # and save the binned alignments into bam files. -->
 <!-- ##objs <- splitGAlignmentsByCut(gal1, txs=txs, genome=genome, outPath=outdir, conservation=phastCons100way.UCSC.hg19) -->
-<!-- # Conservation is an optional parameter.  -->
-<!-- # If you do not have the conservation score or you would like to simply split the bam files using the fragment length,  -->
-<!-- # then you will just need to run the command without providing the conservation argument.  -->
+<!-- # Conservation is an optional parameter. -->
+<!-- # If you do not have the conservation score or you would like to simply split the bam files using the fragment length, -->
+<!-- # then you will just need to run the command without providing the conservation argument. -->
 <!-- # Without setting the conservation parameter, it will run much faster. -->
 <!-- objs <- splitGAlignmentsByCut(gal1, txs=txs, genome=genome, outPath=outdir) -->
 <!-- ##saveRDS(objs, file=paste(outdir,paste(sid,"objs","rds",sep='.'),sep='/')) -->
@@ -202,11 +205,11 @@ fragSize <- fragSizeDist(bamFiles=bamfile, bamFiles.labels=sid, index=idxprefix)
 
 <!-- #### *Heatmap and coverage curve for nucleosome positions* -->
 
-<!-- By averaging the signal across all active TSSs,  -->
-<!-- we should observe that nucleosome-free fragments are enriched at the TSSs,  -->
-<!-- whereas the nucleosome-bound fragments should be enriched both upstream and downstream of the active TSSs and  -->
-<!-- display characteristic phasing of upstream and downstream nucleosomes.  -->
-<!-- Because ATAC-seq reads are concentrated at regions of open chromatin,  -->
+<!-- By averaging the signal across all active TSSs, -->
+<!-- we should observe that nucleosome-free fragments are enriched at the TSSs, -->
+<!-- whereas the nucleosome-bound fragments should be enriched both upstream and downstream of the active TSSs and -->
+<!-- display characteristic phasing of upstream and downstream nucleosomes. -->
+<!-- Because ATAC-seq reads are concentrated at regions of open chromatin, -->
 <!-- users should see a strong nucleosome signal at the +1 nucleosome, but the signal decreases at the +2, +3 and +4 nucleosomes. -->
 
 <!-- ```{r, fig.width=5, fig.height=10, dpi=300} -->
@@ -266,3 +269,7 @@ fragSize <- fragSizeDist(bamFiles=bamfile, bamFiles.labels=sid, index=idxprefix)
 <!-- ##dev.off() -->
 <!-- ``` -->
 
+#### *collect package information*
+```{r}
+sessionInfo()
+```
