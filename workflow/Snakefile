@@ -25,7 +25,8 @@ rule all:
         peak=expand("results/call_peak_genrich_per_sample/{sample}.narrowPeak.gz", sample=config["read1"]),
         #diffbind="results/differential_binding_analysis/report.DiffBind.html",
         diffbindpersample="results/differential_binding_analysis_per_sample/report.DiffBind.persample.html",
-        annpersample="results/annotate_peaks_per_sample/report.peaks.annotation.persample.html"
+        annpersample="results/annotate_peaks_per_sample/report.peaks.annotation.persample.html",
+        bw=expand("results/bam_to_bigwig/{sample}.BPM.bw", sample=config["read1"])
 
 rule rename_fastq:
     input:
@@ -268,4 +269,23 @@ rule annotate_peaks_per_sample:
         "../envs/chipseeker.yaml"
     script:
         "../scripts/annotate_peaks_persample.Rmd"
+
+rule bam_to_bigwig:
+    input:
+        bam="results/shift_reads/{sample}.shifted.bam",
+        bai="results/shift_reads/{sample}.shifted.bam.bai"
+    output:
+        "results/bam_to_bigwig/{sample}.BPM.bw"
+    log:
+        "results/logs/bam_to_bigwig/{sample}.log"
+    resources:
+        tmpdir="results/bam_to_bigwig"
+    threads: 4
+    conda:
+        "../envs/deeptools.yaml"
+    shell:
+        "bamCoverage --bam {input.bam} --outFileName {output} --outFileFormat bigwig "
+        "--binSize 20 --normalizeUsing BPM "
+        "--ignoreForNormalization MT "
+        "--numberOfProcessors {threads} >{log} 2>&1 "
 
