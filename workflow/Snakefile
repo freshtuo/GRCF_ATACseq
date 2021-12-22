@@ -19,6 +19,7 @@ rule all:
         bam=expand("results/remove_duplicates/{sample}.nodup.bam", sample=config["read1"]),
         sortbam=expand("results/sort_bam_by_name/{sample}.name_sorted.bam", sample=config["read1"]),
         bamqc=expand("results/atacseq_qc/report.{sample}.html", sample=config["read1"]),
+        manqc=expand("results/atacseq_qc/{sample}/fragment_length_count.{sample}.txt", sample=config["read1"]),
         shiftbam=expand("results/shift_reads/{sample}.shifted.bam", sample=config["read1"]),
         #peakall=expand("results/call_peak_genrich/{condition}.narrowPeak.gz", condition=config["group"]),
         peak=expand("results/call_peak_genrich_per_sample/{sample}.narrowPeak.gz", sample=config["read1"]),
@@ -158,6 +159,24 @@ rule atacseq_qc:
         "../envs/atacseqqc.yaml"
     script:
         "../scripts/ATACseqQC.Rmd"
+
+rule atacseq_qc_v2:
+    input:
+        rawbam="results/bowtie_align/{sample}.sorted.bam",
+        filtbam="results/remove_duplicates/{sample}.nodup.bam",
+        peak="results/call_peak_genrich_per_sample/{sample}.narrowPeak.gz"
+    output:
+        frag="results/atacseq_qc/{sample}/fragment_length_count.{sample}.txt",
+        mito="results/atacseq_qc/{sample}/mito_content.{sample}.txt",
+        tmpbam=temp("results/atacseq_qc/{sample}/{sample}.primary.name_sorted.bam"),
+        lib="results/atacseq_qc/{sample}/library_complexity.{sample}.txt",
+        frip="results/atacseq_qc/{sample}/frip.{sample}.txt"
+    log: "results/logs/atacseq_qc/{sample}.manual.log"
+    threads: 8
+    conda:
+        "../envs/bedtools.yaml"
+    shell:
+        "sh scripts/manual_bam_qc.sh {wildcards.sample} {input.rawbam} {input.filtbam} {input.peak} results/atacseq_qc/{wildcards.sample} >{log} 2>&1"
 
 rule sort_bam_by_name:
     input:
