@@ -142,7 +142,7 @@ rule shift_reads:
         bai="results/{project}/shift_reads/{sample}.shifted.bam.bai"
     log: "results/{project}/logs/shift_reads/{sample}.log"
     resources:
-        tmpdir="results/{project}/shift_reads"
+        tmpdir="results/{project}/shift_reads/tmp{sample}"
     conda:
         "../envs/deeptools.yaml"
     threads: 8
@@ -160,7 +160,7 @@ rule atacseq_qc:
     log:
         "results/{project}/logs/atacseq_qc/{sample}.log"
     resources:
-        tmpdir="results/{project}/atacseq_qc"
+        tmpdir="results/{project}/atacseq_qc/tmp{sample}"
     conda:
         "../envs/atacseqqc.yaml"
     script:
@@ -284,7 +284,7 @@ rule bam_to_bigwig:
     log:
         "results/{project}/logs/bam_to_bigwig/{sample}.log"
     resources:
-        tmpdir="results/{project}/bam_to_bigwig"
+        tmpdir="results/{project}/bam_to_bigwig/tmp{sample}"
     threads: 4
     conda:
         "../envs/deeptools.yaml"
