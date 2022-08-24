@@ -1,6 +1,6 @@
 import os.path
 
-configfile: "config/config.yaml"
+configfile: "config/config.EC-ZZ-6914.yaml"
 
 def get_read1_file(wildcards):
     return config["read1"][wildcards.sample]
@@ -8,11 +8,14 @@ def get_read1_file(wildcards):
 def get_read2_file(wildcards):
     return config["read2"][wildcards.sample]
 
+project=config["project"]
+
 def get_bam_files(wildcards):
     #return ','.join(['results/{}/sort_bam_by_name/{}.name_sorted.bam'.format(config["project"], x) for x in config["group"][wildcards.condition]])
-    return ['results/{}/sort_bam_by_name/{}.name_sorted.bam'.format(config["project"], x) for x in config["group"][wildcards.condition]]
+    #return ['results/{}/sort_bam_by_name/{}.name_sorted.bam'.format(config["project"], x) for x in config["group"][wildcards.condition]]
+    return ['results/{}/sort_bam_by_name/{}.name_sorted.bam'.format(project, x) for x in config["group"][wildcards.condition]]
 
-project=config["project"]
+#project=config["project"]
 
 rule all:
     input:
@@ -23,11 +26,11 @@ rule all:
         bamqc=expand("results/{project}/atacseq_qc/report.{sample}.html", project=config["project"], sample=config["read1"]),
         manqc=expand("results/{project}/atacseq_qc/{sample}/fragment_length_count.{sample}.txt", project=config["project"], sample=config["read1"]),
         shiftbam=expand("results/{project}/shift_reads/{sample}.shifted.bam", project=config["project"], sample=config["read1"]),
-        #peakall=expand("results/{project}/call_peak_genrich/{condition}.narrowPeak.gz", project=config["project"], condition=config["group"]),
+        ###peakall=expand("results/{project}/call_peak_genrich/{condition}.narrowPeak.gz", project=config["project"], condition=config["group"]),
         peak=expand("results/{project}/call_peak_genrich_per_sample/{sample}.narrowPeak.gz", project=config["project"], sample=config["read1"]),
-        #diffbind=expand("results/{project}/differential_binding_analysis/report.DiffBind.html", project=config["project"]), 
-        diffbindpersample=expand("results/{project}/differential_binding_analysis_per_sample/report.DiffBind.persample.html", project=config["project"]),
-        annpersample=expand("results/{project}/annotate_peaks_per_sample/report.peaks.annotation.persample.html", project=config["project"]),
+        ###diffbind=expand("results/{project}/differential_binding_analysis/report.DiffBind.html", project=config["project"]), 
+        #diffbindpersample=expand("results/{project}/differential_binding_analysis_per_sample/report.DiffBind.persample.html", project=config["project"]),
+        #annpersample=expand("results/{project}/annotate_peaks_per_sample/report.peaks.annotation.persample.html", project=config["project"]),
         bw=expand("results/{project}/bam_to_bigwig/{sample}.BPM.bw", project=config["project"], sample=config["read1"])
 
 rule rename_fastq:
@@ -231,9 +234,9 @@ rule call_peak_genrich_per_sample:
 
 rule differential_binding_analysis:
     input:
-        bam=expand("results/{project}/remove_duplicates/{sample}.nodup.bam", sample=config["read1"]),
-        bai=expand("results/{project}/remove_duplicates/{sample}.nodup.bai", sample=config["read1"]),
-        peak=expand("results/{project}/call_peak_genrich/{condition}.narrowPeak.gz", condition=config["group"])
+        bam=expand("results/{project}/remove_duplicates/{sample}.nodup.bam", project=config["project"], sample=config["read1"]),
+        bai=expand("results/{project}/remove_duplicates/{sample}.nodup.bai", project=config["project"], sample=config["read1"]),
+        peak=expand("results/{project}/call_peak_genrich/{condition}.narrowPeak.gz", project=config["project"], condition=config["group"])
     output:
         "results/{project}/differential_binding_analysis/report.DiffBind.html"
     log:
@@ -246,9 +249,9 @@ rule differential_binding_analysis:
 
 rule differential_binding_analysis_per_sample:
     input:
-        bam=expand("results/{project}/remove_duplicates/{sample}.nodup.bam", sample=config["read1"]),
-        bai=expand("results/{project}/remove_duplicates/{sample}.nodup.bai", sample=config["read1"]),
-        peak=expand("results/{project}/call_peak_genrich_per_sample/{sample}.narrowPeak.gz", sample=config["read1"])
+        bam=expand("results/{project}/remove_duplicates/{sample}.nodup.bam", project=config["project"], sample=config["read1"]),
+        bai=expand("results/{project}/remove_duplicates/{sample}.nodup.bai", project=config["project"], sample=config["read1"]),
+        peak=expand("results/{project}/call_peak_genrich_per_sample/{sample}.narrowPeak.gz", project=config["project"], sample=config["read1"])
     output:
         "results/{project}/differential_binding_analysis_per_sample/report.DiffBind.persample.html"
     log:
@@ -261,7 +264,7 @@ rule differential_binding_analysis_per_sample:
 
 rule annotate_peaks_per_sample:
     input:
-        peak=expand("results/{project}/call_peak_genrich_per_sample/{sample}.narrowPeak.gz", sample=config["read1"]),
+        peak=expand("results/{project}/call_peak_genrich_per_sample/{sample}.narrowPeak.gz", project=config["project"], sample=config["read1"]),
         de="results/{project}/differential_binding_analysis_per_sample/report.DiffBind.persample.html"
     output:
         "results/{project}/annotate_peaks_per_sample/report.peaks.annotation.persample.html"
