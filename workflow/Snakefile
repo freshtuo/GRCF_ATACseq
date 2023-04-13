@@ -214,6 +214,7 @@ rule multiqc:
         rawfqqc=expand("results/{project}/raw_fastq_qc/{sample}_R1_fastqc.html", project=config["project"], sample=config["read1"]),
         bowtie2log=expand("results/{project}/bowtie_align/{sample}.bowtie2.log", project=config["project"], sample=config["read1"]),
         disqc=expand("results/{project}/bam_qc/{sample}.read_distribution.txt", project=config["project"], sample=config["read1"]),
+        bamqc=expand("results/{project}/atacseq_qc/report.{sample}.html", project=config["project"], sample=config["read1"]),
         manqc=expand("results/{project}/atacseq_qc/{sample}/frip.{sample}.txt", project=config["project"], sample=config["read1"])
     output:
         html=expand("results/{project}/multiqc/multiqc_report.html", project=config["project"])
@@ -222,8 +223,9 @@ rule multiqc:
     conda:
         "../envs/multiqc.yaml"
     shell:
-        """multiqc results/{project}/raw_fastq_qc/ results/{project}/bowtie_align/ results/{project}/bam_qc/ results/{project}/bam_qc/ """
-        """results/{project}/atacseq_qc/*/*txt  --ignore "fragment_length_count*" --ignore "*.html" """
+        #"""multiqc results/{project}/raw_fastq_qc/ results/{project}/bowtie_align/ results/{project}/bam_qc/ """
+        """multiqc results/{project}/raw_fastq_qc/ results/{project}/bowtie_align/ """
+        """results/{project}/atacseq_qc/*/  --ignore "fragment_length_count*" --ignore "*.html" """
         """-o results/{project}/multiqc >{log} 2>&1"""
 
 rule sort_bam_by_name:

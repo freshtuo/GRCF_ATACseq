@@ -22,6 +22,8 @@ library(ATACseqQC, quietly=T)
 #library(phastCons100way.UCSC.hg19, quietly=T)
 #library(ChIPpeakAnno, quietly=T)
 #library(ggplot2, quietly=T)
+library(GenomicAlignments, quietly=T)
+library(TxDb.Mmusculus.UCSC.mm10.knownGene, quietly=T)
 
 # location of bam file
 bamfile <- snakemake@input[['bam']]
@@ -50,6 +52,45 @@ indicative of nucleosome occupacy (present in integer multiples).
 
 ```{r, fig.width=7.5, fig.height=5, dpi=300}
 fragSize <- fragSizeDist(bamFiles=bamfile, bamFiles.labels=sid, index=idxprefix)
+```
+
+```{r, fig.width=7.5, fig.height=5, dpi=300}
+png(file.path(outdir, paste0('fragSizeDist_',sid,'_mqc','.png')), width=7.5, height=5, units='in', res=300)
+fragSize <- fragSizeDist(bamFiles=bamfile, bamFiles.labels=sid, index=idxprefix)
+dev.off()
+```
+
+```{r}
+# load transcripts
+txs <- transcripts(TxDb.Mmusculus.UCSC.mm10.knownGene)
+seqlevelsStyle(txs)<- 'NCBI'
+```
+
+```{r}
+# load bam file
+gal <- readGAlignments(bamfile)
+```
+
+```{r}
+tsse <- TSSEscore(gal, txs)
+
+tsse
+
+summary(tsse$values)
+```
+
+```{r fig.width=5.5, fig.height=5, dpi=300}
+plot(100*(-9:10-.5), tsse$values, type="b", 
+    xlab="distance to TSS",
+    ylab="aggregate TSS score")
+```
+
+```{r}
+png(file.path(outdir, paste0('TSS_enrichment_scores_',sid,'_mqc','.png')), width=5.5, height=5, units='in', res=300)
+plot(100*(-9:10-.5), tsse$values, type="b", 
+    xlab="distance to TSS",
+    ylab="aggregate TSS score")
+dev.off()
 ```
 
 <!-- ### Nucleosome positioning -->
