@@ -1,6 +1,6 @@
 import os.path
 
-configfile: "config/config.EC-ZZ-6914.yaml"
+configfile: "config/config.yaml"
 
 def get_read1_file(wildcards):
     return config["read1"][wildcards.sample]
@@ -10,12 +10,19 @@ def get_read2_file(wildcards):
 
 project=config["project"]
 
+def get_shift_reads_tempdir(wildcards):
+    return "results/{}/shift_reads/tmp{}".format(project, wildcards.sample)
+
+def get_atacseq_qc_tempdir(wildcards):
+    return "results/{}/atacseq_qc/tmp{}".format(project, wildcards.sample)
+
+def get_bam_to_bigwig_tempdir(wildcards):
+    return "results/{}/bam_to_bigwig/tmp{}".format(project, wildcards.sample)
+
 def get_bam_files(wildcards):
     #return ','.join(['results/{}/sort_bam_by_name/{}.name_sorted.bam'.format(config["project"], x) for x in config["group"][wildcards.condition]])
     #return ['results/{}/sort_bam_by_name/{}.name_sorted.bam'.format(config["project"], x) for x in config["group"][wildcards.condition]]
     return ['results/{}/sort_bam_by_name/{}.name_sorted.bam'.format(project, x) for x in config["group"][wildcards.condition]]
-
-#project=config["project"]
 
 rule all:
     input:
@@ -25,12 +32,14 @@ rule all:
         sortbam=expand("results/{project}/sort_bam_by_name/{sample}.name_sorted.bam", project=config["project"], sample=config["read1"]),
         bamqc=expand("results/{project}/atacseq_qc/report.{sample}.html", project=config["project"], sample=config["read1"]),
         manqc=expand("results/{project}/atacseq_qc/{sample}/fragment_length_count.{sample}.txt", project=config["project"], sample=config["read1"]),
+        disqc=expand("results/{project}/bam_qc/{sample}.read_distribution.txt", project=config["project"], sample=config["read1"]),
         shiftbam=expand("results/{project}/shift_reads/{sample}.shifted.bam", project=config["project"], sample=config["read1"]),
         ###peakall=expand("results/{project}/call_peak_genrich/{condition}.narrowPeak.gz", project=config["project"], condition=config["group"]),
         peak=expand("results/{project}/call_peak_genrich_per_sample/{sample}.narrowPeak.gz", project=config["project"], sample=config["read1"]),
+        multiqc=expand("results/{project}/multiqc/multiqc_report.html", project=config["project"]),
         ###diffbind=expand("results/{project}/differential_binding_analysis/report.DiffBind.html", project=config["project"]), 
-        #diffbindpersample=expand("results/{project}/differential_binding_analysis_per_sample/report.DiffBind.persample.html", project=config["project"]),
-        #annpersample=expand("results/{project}/annotate_peaks_per_sample/report.peaks.annotation.persample.html", project=config["project"]),
+        ###diffbindpersample=expand("results/{project}/differential_binding_analysis_per_sample/report.DiffBind.persample.html", project=config["project"]),
+        ###annpersample=expand("results/{project}/annotate_peaks_per_sample/report.peaks.annotation.persample.html", project=config["project"]),
         bw=expand("results/{project}/bam_to_bigwig/{sample}.BPM.bw", project=config["project"], sample=config["read1"])
 
 rule rename_fastq:
@@ -101,7 +110,8 @@ rule bowtie_align:
         read2="results/{project}/trim_fastq/{sample}_R2.trimmed.fastq.gz"
     output:
         bam="results/{project}/bowtie_align/{sample}.sorted.bam",
-        bai="results/{project}/bowtie_align/{sample}.sorted.bam.bai"
+        bai="results/{project}/bowtie_align/{sample}.sorted.bam.bai",
+        log="results/{project}/bowtie_align/{sample}.bowtie2.log"
     params:
         refidx=config["refidx"],
         maxins=config["maxins"],
@@ -114,8 +124,9 @@ rule bowtie_align:
     threads: 8
     shell:
         "bowtie2 -X {params.maxins} --very-sensitive -k {params.multimap} --threads {threads} -x {params.refidx} -1 {input.read1} -2 {input.read2} 2>{log.bam} "
-        "|samtools sort -@ {threads} -O BAM -T results/{project}/bowtie_align/{wildcards.sample}.tmp -o {output.bam} - >{log.bai};"
-        "samtools index -@ {threads} {output.bam} >>{log.bai} 2>&1"
+        "|samtools sort -@ {threads} -O BAM -T results/{project}/bowtie_align/{wildcards.sample}.tmp -o {output.bam} - >{log.bai}; "
+        "samtools index -@ {threads} {output.bam} >>{log.bai} 2>&1; "
+        "cp {log.bam} {output.log}; "
 
 rule remove_duplicates:
     input:
@@ -142,7 +153,7 @@ rule shift_reads:
         bai="results/{project}/shift_reads/{sample}.shifted.bam.bai"
     log: "results/{project}/logs/shift_reads/{sample}.log"
     resources:
-        tmpdir="results/{project}/shift_reads/tmp{sample}"
+        tmpdir=get_shift_reads_tempdir
     conda:
         "../envs/deeptools.yaml"
     threads: 8
@@ -160,7 +171,7 @@ rule atacseq_qc:
     log:
         "results/{project}/logs/atacseq_qc/{sample}.log"
     resources:
-        tmpdir="results/{project}/atacseq_qc/tmp{sample}"
+        tmpdir=get_atacseq_qc_tempdir
     conda:
         "../envs/atacseqqc.yaml"
     script:
@@ -183,6 +194,37 @@ rule atacseq_qc_v2:
         "../envs/bedtools.yaml"
     shell:
         "sh scripts/manual_bam_qc.sh {wildcards.sample} {input.rawbam} {input.filtbam} {input.peak} results/{project}/atacseq_qc/{wildcards.sample} >{log} 2>&1"
+
+rule bam_qc:
+    input:
+        bam="results/{project}/shift_reads/{sample}.shifted.bam"
+    output:
+        rdis="results/{project}/bam_qc/{sample}.read_distribution.txt"
+    params:
+        rsgs=config["rsgs"]
+    log:
+        rdis="results/{project}/logs/bam_qc/{sample}.read_distribution.log"
+    conda:
+        "../envs/rseqc.yaml"
+    shell:
+        "read_distribution.py -i {input.bam} -r {params.rsgs} >{output.rdis} 2>{log.rdis}; "
+
+rule multiqc:
+    input:
+        rawfqqc=expand("results/{project}/raw_fastq_qc/{sample}_R1_fastqc.html", project=config["project"], sample=config["read1"]),
+        bowtie2log=expand("results/{project}/bowtie_align/{sample}.bowtie2.log", project=config["project"], sample=config["read1"]),
+        disqc=expand("results/{project}/bam_qc/{sample}.read_distribution.txt", project=config["project"], sample=config["read1"]),
+        manqc=expand("results/{project}/atacseq_qc/{sample}/frip.{sample}.txt", project=config["project"], sample=config["read1"])
+    output:
+        html=expand("results/{project}/multiqc/multiqc_report.html", project=config["project"])
+    log:
+        expand("results/{project}/logs/multiqc/multiqc.log", project=config["project"])
+    conda:
+        "../envs/multiqc.yaml"
+    shell:
+        """multiqc results/{project}/raw_fastq_qc/ results/{project}/bowtie_align/ results/{project}/bam_qc/ results/{project}/bam_qc/ """
+        """results/{project}/atacseq_qc/*/*txt  --ignore "fragment_length_count*" --ignore "*.html" """
+        """-o results/{project}/multiqc >{log} 2>&1"""
 
 rule sort_bam_by_name:
     input:
@@ -284,7 +326,7 @@ rule bam_to_bigwig:
     log:
         "results/{project}/logs/bam_to_bigwig/{sample}.log"
     resources:
-        tmpdir="results/{project}/bam_to_bigwig/tmp{sample}"
+        tmpdir=get_bam_to_bigwig_tempdir
     threads: 4
     conda:
         "../envs/deeptools.yaml"
