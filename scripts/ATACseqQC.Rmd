@@ -34,6 +34,9 @@ idxprefix <- gsub('.bai', '', idxfile)
 sid <- strsplit(basename(bamfile), split='[.]')[[1]][1]
 print(paste('Sample id:',sid))
 
+# obtain species
+sp <- snakemake@params[['sp']]
+
 # output directory
 outdir <- file.path(dirname(snakemake@output[[1]]), sid)
 if (! file.exists(outdir)){
@@ -62,7 +65,17 @@ dev.off()
 
 ```{r}
 # load transcripts
-txs <- transcripts(TxDb.Mmusculus.UCSC.mm10.knownGene)
+txs <- NULL
+if (sp == 'mouse'){
+    library(TxDb.Mmusculus.UCSC.mm10.knownGene, quietly=T)
+    txs <- transcripts(TxDb.Mmusculus.UCSC.mm10.knownGene)
+} else if (sp == 'human'){
+    library(TxDb.Hsapiens.UCSC.hg19.knownGene, quietly=T)
+    txs <- transcripts(TxDb.Hsapiens.UCSC.hg19.knownGene)
+} else {
+    print('Currently the pipeline only supports human or mouse genome.')
+    q()
+}
 seqlevelsStyle(txs)<- 'NCBI'
 ```
 
