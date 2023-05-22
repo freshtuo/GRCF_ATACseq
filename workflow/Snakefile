@@ -170,10 +170,13 @@ rule atacseq_qc:
         "results/{project}/atacseq_qc/report.{sample}.html"
     log:
         "results/{project}/logs/atacseq_qc/{sample}.log"
+    params:
+        sp=config["species"]
     resources:
         tmpdir=get_atacseq_qc_tempdir
     conda:
         "../envs/atacseqqc.yaml"
+    threads: 2
     script:
         "../scripts/ATACseqQC.Rmd"
 
