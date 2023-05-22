@@ -37,6 +37,9 @@ refidx: /data/gc-core/database/ATACseq/genome/GRCm38/Sequence/Bowtie2Index/genom
 maxins: 2000
 multimap: 5
 
+# ATACseqQC parameters
+species: mouse
+
 # RSeQC parameters
 rsgs: /data/gc-core/taz2008/Softwares/RSeQC-2.6.2/db/GRCm38_RefSeq.bed
 
